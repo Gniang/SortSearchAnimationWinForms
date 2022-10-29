@@ -9,7 +9,7 @@ namespace WinFormsApp1
     {
         public class Item
         {
-            public int Idx { get; set; }
+            public int SortingValue { get; set; }
             public int Hoge { get; set; }
         }
 
@@ -21,46 +21,9 @@ namespace WinFormsApp1
         private int? searchTargetIdx;
         private BinarySearchProgress? binarySearchProgress;
         private IEnumerable<DrawItem> drawItems;
-        private SortProgress? sortProgress;
+        private ISortProgress? sortProgress;
 
-        /// <summary>クイックソート (進捗機能あり) 「SortProgress, BTree<IList<int>>」はソート処理に関係ない進捗機能用。都度配列を作ってるのも進捗表示のため。</summary>
-        public async ValueTask<List<int>> QuickSort(IList<int> values, SortProgress p, BTree<IList<int>> partOfSortArea)
-        {
 
-            if (values == null || !values.Any())
-            {
-                return new List<int>();
-            }
-
-            var firstElement = values[0];
-            var rest = values.Skip(1).ToArray();
-
-            var smallerElements = rest.Where(i => i < firstElement).ToArray();
-            var largerElements = rest.Where(i => i >= firstElement).ToArray();
-
-            partOfSortArea.Value = new[] { firstElement };
-            partOfSortArea.SetLeft(smallerElements);
-            partOfSortArea.SetRight(largerElements);
-            p.SortRange = values;
-            await p.Wait();
-
-            p.SortRange = smallerElements;
-            var sortedSmallers = await QuickSort(smallerElements, p, partOfSortArea.Left);
-            partOfSortArea.SetLeft(sortedSmallers);
-
-            p.SortRange = largerElements;
-            var sortedLargers = await QuickSort(largerElements, p, partOfSortArea.Right);
-            partOfSortArea.SetRight(sortedLargers);
-
-            var sorted = sortedSmallers
-                .Concat(new int[] { firstElement })
-                .Concat(sortedLargers)
-                .ToList();
-
-            p.SortRange = sorted;
-            await p.Wait();
-            return sorted;
-        }
 
         /// <summary>バイナリサーチ（進捗機能あり）「BinarySearchProgress」は探索処理に関係ない進捗機能用</summary>
         private async ValueTask<(bool isFind, int? findIndex)> BinarySearch(int t, IList<int> a, BinarySearchProgress p)
@@ -92,11 +55,14 @@ namespace WinFormsApp1
 
         public Form1()
         {
+            // ソートの進捗描画は同じ数値のデータが複数あると、変な動きをする
+            // →対応するとソート処理に関係ないデータ構造や構文が話に混ざってくるので、あえて無視してる。
+
             //
-            // データ準備 適当に1000件
+            // データ準備 適当数
             //
             var r = new Random();
-            var baseItems = CreateItems(Enumerable.Range(0, 500));
+            var baseItems = CreateItems(Enumerable.Range(0, 30));
             this.items = baseItems;
 
 
@@ -104,20 +70,28 @@ namespace WinFormsApp1
             // 画面表示コントロールの準備
             //
             // ソート操作欄
+            this.Font = new Font("Yu Gothic UI", 12);
             var sortPanel = new FlowLayoutPanel
             {
                 Dock = DockStyle.Top,
-                Height = 40,
+                WrapContents = false,
+                Height = 60,
             };
-            var sortStartBtn = new Button
+            var quickSortStartBtn = new Button
+            {
+                Padding = new Padding(20, 0, 0, 0),
+                Width = 120,
+                Text = "Setup QuickSort",
+            };
+            var selectionSortStartBtn = new Button
             {
                 Margin = new Padding(20, 0, 0, 0),
                 Width = 120,
-                Text = "Setup Sort"
+                Text = "Setup SelecitonSort"
             };
             var sortStepBtn = new Button
             {
-                Margin = new Padding(20, 0, 0, 0),
+                Margin = new Padding(30, 0, 0, 0),
                 Width = 120,
                 Text = "Sort Next Step"
             };
@@ -127,14 +101,22 @@ namespace WinFormsApp1
                 Width = 120,
                 Text = "To Random Order"
             };
+            var sortInfoTxt = new TextBoxEx
+            {
+                Margin = new Padding(50, 0, 0, 0),
+                Width = 300,
+                ReadOnly = true,
+                BackColor = Color.White,
+            };
 
             // 検索操作欄
             var searchPanel = new FlowLayoutPanel
             {
                 Dock = DockStyle.Top,
-                Height = 40,
+                WrapContents = false,
+                Height = 60,
             };
-            var binarySearchTargetTxt = new TextBox
+            var binarySearchTargetTxt = new TextBoxEx
             {
                 Width = 220,
                 PlaceholderText = $"0~{items.Count - 1}の範囲で検索対象を入力"
@@ -157,25 +139,54 @@ namespace WinFormsApp1
             {
                 Dock = DockStyle.Fill,
             };
-            sortPanel.Controls.AddRange(new Control[] { sortStartBtn, sortStepBtn, randomSortBtn });
+
+            Action<List<Control>> autoHeight = (items) =>
+            {
+                items.ForEach(x => x.Height = x.Parent.Height - x.Parent.Padding.Vertical);
+            };
+            sortPanel.Controls.AddRange(new Control[] { quickSortStartBtn, selectionSortStartBtn, sortStepBtn, randomSortBtn, sortInfoTxt });
+            sortPanel.Resize += (s, e) => { autoHeight.Invoke(new List<Control>(sortPanel.Controls.Cast<Control>())); };
             searchPanel.Controls.AddRange(new Control[] { binarySearchTargetTxt, searchStartBtn, searchStepBtn });
+            searchPanel.Resize += (s, e) => { autoHeight.Invoke(new List<Control>(searchPanel.Controls.Cast<Control>())); };
             this.Controls.AddRange(new Control[] { pic, searchPanel, sortPanel });
             this.WindowState = FormWindowState.Maximized;
+            this.MinimumSize = new Size(720, 480);
             this.tooltip = new ToolTip();
-
+            this.Load += (s, e) => { randomSortBtn.Focus(); };
 
             //
             // 操作イベントの定義
             //
-
-            // ソート処理の開始
-            sortStartBtn.Click += async (s, e) =>
+            Action showSortInfo = () =>
             {
-                var it = items.Select(x => x.Idx).ToArray();
-                var p = new SortProgress() { Tree = new BTree<IList<int>>(it), SortRange = it };
+                if (this.sortProgress != null)
+                {
+                    sortInfoTxt.Text = $"ループ処理：{this.sortProgress?.StepCounter}回目";
+                }
+            };
+            // ソート処理の開始
+            quickSortStartBtn.Click += async (s, e) =>
+            {
+                var it = items.Select(x => x.SortingValue).ToArray();
+                var p = new QuickSortProgress() { Tree = new BTree<IList<int>>(it), SortRanges = it };
                 this.sortProgress = p;
                 pic.Refresh();
-                var sorted = await QuickSort(it, p, p.Tree);
+                sortStepBtn.Focus();
+                showSortInfo.Invoke();
+                var sorted = await Sorts.QuickSort(it, p, p.Tree);
+                this.items = CreateItems(sorted);
+                sortProgress = null;
+                pic.Refresh();
+            };
+            selectionSortStartBtn.Click += async (s, e) =>
+            {
+                var it = items.Select(x => x.SortingValue).ToArray();
+                var p = new SelectionSortProgress() { SortingItems = it, SortRanges = it };
+                this.sortProgress = p;
+                pic.Refresh();
+                sortStepBtn.Focus();
+                showSortInfo.Invoke();
+                var sorted = await Sorts.SelectionSort(it, p);
                 this.items = CreateItems(sorted);
                 sortProgress = null;
                 pic.Refresh();
@@ -188,6 +199,7 @@ namespace WinFormsApp1
                 {
                     this.sortProgress.Next();
                     pic.Refresh();
+                    showSortInfo.Invoke();
                 }
             };
 
@@ -197,7 +209,7 @@ namespace WinFormsApp1
                 this.items = this.items
                     .Select(x => (r: r.Next(), v: x))
                     .OrderBy(x => x.r)
-                    .Select(x => new Item() { Hoge = x.v.Hoge, Idx = x.v.Idx })
+                    .Select(x => new Item() { Hoge = x.v.Hoge, SortingValue = x.v.SortingValue })
                     .ToList();
                 sortProgress = null;
                 pic.Refresh();
@@ -226,7 +238,8 @@ namespace WinFormsApp1
                     p.SetStatus(0, items.Count);
                     this.binarySearchProgress = p;
                     pic.Refresh();
-                    await BinarySearch(this.searchTargetIdx.Value, items.Select(x => x.Idx).ToArray(), p);
+                    searchStepBtn.Focus();
+                    await BinarySearch(this.searchTargetIdx.Value, items.Select(x => x.SortingValue).ToArray(), p);
                 }
             };
 
@@ -256,7 +269,7 @@ namespace WinFormsApp1
                 IList<Item> items = this.items;
                 if (sp != null)
                 {
-                    items = CreateItems(sp.Tree.Flatten().SelectMany(x => x));
+                    items = CreateItems(sp.SortingItems);
                 }
                 // 表示初期化
                 var g = e.Graphics;
@@ -269,12 +282,13 @@ namespace WinFormsApp1
                     .Select((x, idx) =>
                     {
                         // 描画図形の領域を求める
-                        var h = c.Height * ((float)x.Idx / items.Count);
+                        //高さ0のデータができないよう＋１かさ増し
+                        var h = c.Height * (((float)x.SortingValue + 1) / (items.Count + 1));
                         var area = new RectangleF() { X = idx * w, Y = c.Height - h, Height = h, Width = w };
 
                         // 条件に応じて色決める
                         // ソート時
-                        //   ソート操作範囲：シアン
+                        //   ソート操作範囲：シアン, ソート中の比較してる2点： 基準値_マゼンタ, 比較値_オレンジ
                         // 検索時
                         //   検索対象：オレンジ、検索対象が見つかった：マゼンタ、
                         //   2分探索範囲 Min側：緑、 Mid:黄色、 Max側：青
@@ -285,18 +299,27 @@ namespace WinFormsApp1
                         }
                         if (sp != null)
                         {
-                            if (sp.SortRange.Contains(idx))
+
+                            if (sp.Comparings?.Base == x.SortingValue)
+                            {
+                                fillColor = Brushes.Magenta;
+                            }
+                            else if (sp.Comparings?.Comparing == x.SortingValue)
+                            {
+                                fillColor = Brushes.Orange;
+                            }
+                            else if (sp.SortRanges.Contains(x.SortingValue))
                             {
                                 fillColor = Brushes.Cyan;
                             }
                         }
                         else if (bsp != null)
                         {
-                            if (x.Idx == bsp.Mid && idx == target)
+                            if (x.SortingValue == bsp.Mid && idx == target)
                             {
                                 fillColor = Brushes.Magenta;
                             }
-                            else if (x.Idx == target)
+                            else if (x.SortingValue == target)
                             {
                                 fillColor = Brushes.Orange;
                             }
@@ -335,7 +358,7 @@ namespace WinFormsApp1
                         .FirstOrDefault(x => x.Area.Contains(e.Location));
                     if (d != null)
                     {
-                        tooltip.Show($"item:{d.Item.Idx}", pic, e.X - 25, e.Y - 18);
+                        tooltip.Show($"item:{d.Item.SortingValue}", pic, e.X - 25, e.Y - 18);
                     }
                     else
                     {
@@ -348,7 +371,7 @@ namespace WinFormsApp1
 
         private List<Item> CreateItems(IEnumerable<int> items)
         {
-            return items.Select(x => new Item { Idx = x, Hoge = x }).ToList();
+            return items.Select(x => new Item { SortingValue = x, Hoge = x }).ToList();
         }
 
         /// <summary>描画データ</summary>
@@ -359,92 +382,5 @@ namespace WinFormsApp1
             public Brush FillColor { get; init; }
         }
 
-        /// <summary>処理を途中で止めるツール</summary>
-        public class StepWaiter
-        {
-            private Task waiter = Task.CompletedTask;
-            private TaskCompletionSource tcs = new TaskCompletionSource();
-
-            public async ValueTask Wait()
-            {
-                tcs = new TaskCompletionSource();
-                waiter = tcs.Task;
-                await waiter;
-            }
-
-            public void Next()
-            {
-                if (!tcs.Task.IsCompleted)
-                {
-                    tcs.SetResult();
-                }
-            }
-        }
-
-        /// <summary>ソート状況をトラッキングするためのデータ</summary>
-        public class SortProgress : StepWaiter
-        {
-            public BTree<IList<int>> Tree { get; set; }
-            public IList<int> SortRange { get; set; } = Array.Empty<int>();
-        }
-
-        /// <summary>2分探索状況をトラッキングするためのデータ</summary>
-        public class BinarySearchProgress : StepWaiter
-        {
-            public int Min { get; private set; } = 0;
-            public int Max { get; private set; } = int.MaxValue;
-            public int Mid => (Min + Max) / 2;
-
-            public void SetStatus(int min, int max)
-            {
-                Min = min;
-                Max = max;
-            }
-        }
-
-        /// <summary>2分木 クイックソートのデータ管理に仕方なくそれっぽいものを用意。なぜ標準ライブラリにないのか。</summary>
-        public class BTree<T>
-        {
-            public T Value { get; set; }
-            public BTree<T>? Left { get; private set; }
-            public BTree<T>? Right { get; private set; }
-            public BTree<T>? Parent { get; private set; }
-
-            public BTree(T value)
-            {
-                this.Value = value;
-            }
-
-            public BTree<T> SetLeft(T value)
-            {
-                var node = new BTree<T>(value) { Parent = this };
-                this.Left = node;
-                return node;
-            }
-            public BTree<T> SetRight(T value)
-            {
-                var node = new BTree<T>(value) { Parent = this };
-                this.Right = node;
-                return node;
-            }
-
-            /// <summary>木構造を折りたたんで、一列に並べる。　左-親-右 の順</summary>
-            public IEnumerable<T> Flatten()
-            {
-                if (Left != null && Right != null)
-                {
-                    return Left.Flatten().Concat(new T[] { Value }).Concat(Right.Flatten());
-                }
-                else if (Left != null)
-                {
-                    return Left.Flatten().Concat(new T[] { Value });
-                }
-                else if (Right != null)
-                {
-                    return (new T[] { Value }).Concat(Right.Flatten());
-                }
-                return new[] { Value };
-            }
-        }
     }
 }

@@ -16,4 +16,12 @@
     <PackageReference Include="SkiaSharp.Views.WindowsForms" Version="2.88.3" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EditorConfigFiles Remove="L:\Users\Gniang\Documents\Code\WinFormsAppSortSearchAnimation\WinFormsApp1\.editorconfig" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="L:\Users\Gniang\Documents\Code\WinFormsAppSortSearchAnimation\WinFormsApp1\.editorconfig" />
+  </ItemGroup>
+
 </Project>
