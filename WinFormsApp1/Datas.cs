@@ -58,7 +58,10 @@ namespace WinFormsApp1
         {
             Comparings = null;
         }
-
+        public void Compare(int baseVal, int comapringVal)
+        {
+            Comparings = (baseVal, comapringVal);
+        }
         public void CompareNext(int baseVal, int comapringVal)
         {
             StepCounter++;

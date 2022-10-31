@@ -36,6 +36,15 @@ namespace WinFormsApp1
                 };
 
 
+                // 進捗表示 値が大きいとき後ろに追いやるので、それを視覚化する。（小さいときは移動しないので表示スキップ）
+                p.Compare(firstElement, x);
+                if (x >= firstElement) await p.Wait();
+                var restOfTargets = rest.Except(smallerElements.Concat(largerElements));
+                partOfSortArea.Value = new int[] { firstElement }
+                    .Concat(smallerElements)
+                    .Concat(restOfTargets)
+                    .Concat(largerElements)
+                    .ToArray();
                 p.CompareNext(firstElement, x);
                 await p.Wait();
             }
