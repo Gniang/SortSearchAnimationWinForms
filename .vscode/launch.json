@@ -9,7 +9,7 @@
             "type": "coreclr",
             "request": "launch",
             "preLaunchTask": "build",
-            "program": "${workspaceFolder}/WinFormsApp1/bin/Debug/net6.0-windows/WinFormsApp1.dll",
+            "program": "${workspaceFolder}/WinFormsApp1/bin/Debug/net6.0-windows/WinFormsAppSortAnim.exe",
             "args": [],
             "cwd": "${workspaceFolder}/WinFormsApp1",
             "console": "internalConsole",
